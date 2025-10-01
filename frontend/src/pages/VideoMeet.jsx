@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import io from "socket.io-client";
 import { Badge, IconButton, TextField } from '@mui/material';
 import { Button } from '@mui/material';
@@ -25,54 +25,35 @@ const peerConfigConnections = { // setup stun servers: lets the local ip address
 
 export default function VideoMeetComponent() {
 
-    {/* state management */}
-
-    // useRef(): for the values that do not need re rendering
-    // useState(): for the values that should trigger the re render
-
     var socketRef = useRef();
-    let socketIdRef = useRef(); // holds the unique socket id of the user (does not re render on providing a new socket id)
+    let socketIdRef = useRef(); 
 
-    let localVideoref = useRef(); // refers to the local video stream running on device
+    let localVideoref = useRef(); 
 
-    // if any of the useState() components change the ui re renders to match the state of the component
+    let [videoAvailable, setVideoAvailable] = useState(true); 
+    let [audioAvailable, setAudioAvailable] = useState(true); 
+    let [screenAvailable, setScreenAvailable] = useState(); 
 
-    let [videoAvailable, setVideoAvailable] = useState(true); // check if the h/w to enable video is present
-    let [audioAvailable, setAudioAvailable] = useState(true); // check if the h/w to enable audio is present
-    let [screenAvailable, setScreenAvailable] = useState(); // check if the h/w to enable screen share is present
+    let [video, setVideo] = useState([]); 
+    let [audio, setAudio] = useState(); 
+    let [screen, setScreen] = useState(); 
 
-    let [video, setVideo] = useState([]); // stores the current state of video feeds
-    let [audio, setAudio] = useState(); // stores the current state of audio feeds
-    let [screen, setScreen] = useState(); // stores the current state of screen share feeds
+    let [showModal, setModal] = useState(true); 
 
-    let [showModal, setModal] = useState(true); // checks if the popup is visible for the chat section (by default: popup shown)
+    let [messages, setMessages] = useState([]) 
+    let [message, setMessage] = useState(""); 
+    let [newMessages, setNewMessages] = useState(3); 
 
-    let [messages, setMessages] = useState([]) // chat history
-    let [message, setMessage] = useState(""); // message the current user is typing
-    let [newMessages, setNewMessages] = useState(3); // the number of unread messages that are present
-
-    let [askForUsername, setAskForUsername] = useState(true); // when the user enters by default he is asked to provide a username
+    let [askForUsername, setAskForUsername] = useState(true); 
     let [username, setUsername] = useState("");
 
     let [videos, setVideos] = useState([])
 
-    const videoRef = useRef([]) // handles the video stream of other users that join the room
+    const videoRef = useRef([]) 
 
-    useEffect(() => {
-        console.log("HELLO")
-        getPermissions();
-
-    })
-
-    {/* state management */}
-
-    {/* core functions */}
-
-    // get the media permissions
-
-    const getPermissions = async () => {
+    const getPermissions = useCallback(async () => {
         try {
-            const videoPermission = await navigator.mediaDevices.getUserMedia({ video: true }); // await to get permission for video
+            const videoPermission = await navigator.mediaDevices.getUserMedia({ video: true }); 
             if (videoPermission) {
                 setVideoAvailable(true);
                 console.log('Video permission granted');
@@ -81,7 +62,7 @@ export default function VideoMeetComponent() {
                 console.log('Video permission denied');
             }
 
-            const audioPermission = await navigator.mediaDevices.getUserMedia({ audio: true }); // await to get permission for audio
+            const audioPermission = await navigator.mediaDevices.getUserMedia({ audio: true }); 
             if (audioPermission) {
                 setAudioAvailable(true);
                 console.log('Audio permission granted');
@@ -90,13 +71,13 @@ export default function VideoMeetComponent() {
                 console.log('Audio permission denied');
             }
 
-            if (navigator.mediaDevices.getDisplayMedia) { // // await to get permission for screen share
+            if (navigator.mediaDevices.getDisplayMedia) { 
                 setScreenAvailable(true);
             } else {
                 setScreenAvailable(false);
             }
 
-            if (videoAvailable || audioAvailable) { // show the feed once the permission is granted
+            if (videoAvailable || audioAvailable) { 
                 const userMediaStream = await navigator.mediaDevices.getUserMedia({ video: videoAvailable, audio: audioAvailable });
                 if (userMediaStream) {
                     window.localStream = userMediaStream;
@@ -108,7 +89,13 @@ export default function VideoMeetComponent() {
         } catch (error) {
             console.log(error);
         }
-    };
+    }, [audioAvailable, videoAvailable]);
+
+    useEffect(() => {
+        console.log("HELLO")
+        getPermissions();
+
+    }, [getPermissions])
 
     let gotMessageFromServer = (fromId, message) => {
         var signal = JSON.parse(message)
@@ -132,31 +119,38 @@ export default function VideoMeetComponent() {
         }
     }
 
+    const addMessage = (data, sender, socketIdSender) => {
+        setMessages((prevMessages) => [
+            ...prevMessages,
+            { sender: sender, data: data }
+        ]);
+        if (socketIdSender !== socketIdRef.current) {
+            setNewMessages((prevNewMessages) => prevNewMessages + 1);
+        }
+    };
+
     // connecting to backend server using socket
 
-    let connectToSocketServer = () => {
-        socketRef.current = io.connect(server_url, { secure: false }) // sends a request to connect to the server
+    let connectToSocketServer = useCallback(() => {
+        socketRef.current = io.connect(server_url, { secure: false }) 
 
         socketRef.current.on('signal', gotMessageFromServer)
 
         socketRef.current.on('connect', () => {
-            socketRef.current.emit('join-call', window.location.href) // message sent to server by a user to join the call
-            socketIdRef.current = socketRef.current.id // user socket id is stored
+            socketRef.current.emit('join-call', window.location.href) 
+            socketIdRef.current = socketRef.current.id 
 
-            //preparation (do this from both sides)
-            socketRef.current.on('user-joined', (id, clients) => { // after a user joins the call...
+            socketRef.current.on('user-joined', (id, clients) => { 
                 clients.forEach((socketListId) => {
 
-                    connections[socketListId] = new RTCPeerConnection(peerConfigConnections) // setup rtc to each and every user in the call
+                    connections[socketListId] = new RTCPeerConnection(peerConfigConnections) 
 
-                    // wait for their ice candidate       
                     connections[socketListId].onicecandidate = function (event) {
                         if (event.candidate != null) {
                             socketRef.current.emit('signal', socketListId, JSON.stringify({ 'ice': event.candidate }))
                         }
                     }
 
-                    // wait for their video stream
                     connections[socketListId].onaddstream = (event) => {
                         console.log("BEFORE:", videoRef.current);
                         console.log("FINDING ID: ", socketListId);
@@ -166,7 +160,6 @@ export default function VideoMeetComponent() {
                         if (videoExists) {
                             console.log("FOUND EXISTING");
 
-                            // update the stream of the existing video
                             setVideos(videos => {
                                 const updatedVideos = videos.map(video =>
                                     video.socketId === socketListId ? { ...video, stream: event.stream } : video
@@ -176,7 +169,6 @@ export default function VideoMeetComponent() {
                             });
                         } else {
 
-                            // create a new video
                             console.log("CREATING NEW");
                             let newVideo = {
                                 socketId: socketListId,
@@ -193,7 +185,6 @@ export default function VideoMeetComponent() {
                         }
                     };
 
-                    // add the local video stream
                     if (window.localStream !== undefined && window.localStream !== null) {
                         connections[socketListId].addStream(window.localStream)
                     } else {
@@ -203,7 +194,6 @@ export default function VideoMeetComponent() {
                     }
                 })
 
-                // initiation (only the new user does this)
                 if (id === socketIdRef.current) {
                     for (let id2 in connections) {
                         if (id2 === socketIdRef.current) continue
@@ -229,11 +219,24 @@ export default function VideoMeetComponent() {
                 setVideos((videos) => videos.filter((video) => video.socketId !== id))
             })
         })
+    }, [])
+
+    const silence = () => {
+        let ctx = new AudioContext()
+        let oscillator = ctx.createOscillator()
+        let dst = oscillator.connect(ctx.createMediaStreamDestination())
+        oscillator.start()
+        ctx.resume()
+        return Object.assign(dst.stream.getAudioTracks()[0], { enabled: false })
     }
 
-    // setup audio and video for each user
-
-    let getUserMediaSuccess = (stream) => {
+    const black = ({ width = 640, height = 480 } = {}) => {
+        let canvas = Object.assign(document.createElement("canvas"), { width, height })
+        canvas.getContext('2d').fillRect(0, 0, width, height)
+        let stream = canvas.captureStream()
+        return Object.assign(stream.getVideoTracks()[0], { enabled: false })
+    }
+    const getUserMediaSuccess = useCallback((stream) => {
         try {
             window.localStream.getTracks().forEach(track => track.stop())
         } catch (e) { console.log(e) }
@@ -281,9 +284,9 @@ export default function VideoMeetComponent() {
                 })
             }
         })
-    }
+    }, [])
 
-    let getUserMedia = () => {
+    const getUserMedia = useCallback(() => {
         if ((video && videoAvailable) || (audio && audioAvailable)) {
             navigator.mediaDevices.getUserMedia({ video: video, audio: audio })
                 .then(getUserMediaSuccess)
@@ -295,7 +298,7 @@ export default function VideoMeetComponent() {
                 tracks.forEach(track => track.stop())
             } catch (e) { }
         }
-    }
+    }, [audio, audioAvailable, video, videoAvailable, getUserMediaSuccess])
 
     useEffect(() => {
         if (video !== undefined && audio !== undefined) {
@@ -303,16 +306,10 @@ export default function VideoMeetComponent() {
             console.log("SET STATE HAS ", video, audio);
 
         }
-    }, [video, audio])
-    let getMedia = () => {
-        setVideo(videoAvailable);
-        setAudio(audioAvailable);
-        connectToSocketServer();
-    }
+    }, [video, audio, getUserMedia])
+    
 
-    // display audio and video for each user
-
-    let getDislayMediaSuccess = (stream) => {
+    const getDislayMediaSuccess = useCallback((stream) => {
         console.log("HERE")
         try {
             window.localStream.getTracks().forEach(track => track.stop())
@@ -350,9 +347,9 @@ export default function VideoMeetComponent() {
             getUserMedia()
 
         })
-    }
+    }, [getUserMedia])
 
-    let getDislayMedia = () => {
+    const getDislayMedia = useCallback(() => {
         if (screen) {
             if (navigator.mediaDevices.getDisplayMedia) {
                 navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
@@ -361,29 +358,20 @@ export default function VideoMeetComponent() {
                     .catch((e) => console.log(e))
             }
         }
-    }
+    }, [screen, getDislayMediaSuccess])
 
     useEffect(() => {
         if (screen !== undefined) {
             getDislayMedia();
         }
-    }, [screen])
-
-    let silence = () => {
-        let ctx = new AudioContext()
-        let oscillator = ctx.createOscillator()
-        let dst = oscillator.connect(ctx.createMediaStreamDestination())
-        oscillator.start()
-        ctx.resume()
-        return Object.assign(dst.stream.getAudioTracks()[0], { enabled: false })
+    }, [screen, getDislayMedia])
+    
+    let getMedia = () => {
+        setVideo(videoAvailable);
+        setAudio(audioAvailable);
+        connectToSocketServer();
     }
 
-    let black = ({ width = 640, height = 480 } = {}) => {
-        let canvas = Object.assign(document.createElement("canvas"), { width, height })
-        canvas.getContext('2d').fillRect(0, 0, width, height)
-        let stream = canvas.captureStream()
-        return Object.assign(stream.getVideoTracks()[0], { enabled: false })
-    }
 
     let handleVideo = () => {
         setVideo(!video);
@@ -405,28 +393,11 @@ export default function VideoMeetComponent() {
         window.location.href = "/"
     }
 
-    let openChat = () => {
-        setModal(true);
-        setNewMessages(0);
-    }
-
-    let closeChat = () => {
-        setModal(false);
-    }
-
     let handleMessage = (e) => {
         setMessage(e.target.value);
     }
 
-    const addMessage = (data, sender, socketIdSender) => {
-        setMessages((prevMessages) => [
-            ...prevMessages,
-            { sender: sender, data: data }
-        ]);
-        if (socketIdSender !== socketIdRef.current) {
-            setNewMessages((prevNewMessages) => prevNewMessages + 1);
-        }
-    };
+    
 
     let sendMessage = () => {
         console.log(socketRef.current);
@@ -438,9 +409,7 @@ export default function VideoMeetComponent() {
         setAskForUsername(false);
         getMedia();
     }
-
-    {/* core functions */}
-
+    
     return (
         <div>
             {askForUsername === true ?
@@ -475,7 +444,7 @@ export default function VideoMeetComponent() {
                             </div>
 
                             <div className={styles.chattingArea}>
-                                <TextField value={message} onChange={(e) => setMessage(e.target.value)} id="outlined-basic" label="Enter Your chat" variant="outlined" />
+                                <TextField value={message} onChange={handleMessage} id="outlined-basic" label="Enter Your chat" variant="outlined" />
 
                                 <Button variant='contained' onClick={sendMessage}>Send</Button>
                             </div>
@@ -488,7 +457,7 @@ export default function VideoMeetComponent() {
                         </IconButton>
 
                         <IconButton onClick={handleEndCall} style={{ color: "red" }}>
-                            <CallEndIcon  />
+                            <CallEndIcon />
                         </IconButton>
 
                         <IconButton onClick={handleAudio} style={{ color: "white" }}>
